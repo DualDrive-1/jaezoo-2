@@ -14,11 +14,13 @@ namespace JaeZoo.Server.Controllers
     {
         private readonly AppDbContext _db;
         private readonly ILogger<UsersController> _log;
+        private readonly IWebHostEnvironment _env;
 
-        public UsersController(AppDbContext db, ILogger<UsersController> log)
+        public UsersController(AppDbContext db, ILogger<UsersController> log, IWebHostEnvironment env)
         {
             _db = db;
             _log = log;
+            _env = env;
         }
 
         private Guid MeId
@@ -32,8 +34,7 @@ namespace JaeZoo.Server.Controllers
             }
         }
 
-        // ===== СУЩЕСТВУЮЩЕЕ: поиск пользователей =====
-        // GET /api/users/search?q=...
+        // ===== Поиск =====
         [HttpGet("search")]
         public async Task<ActionResult<IEnumerable<UserSearchDto>>> Search([FromQuery] string q, CancellationToken ct)
         {
@@ -67,7 +68,6 @@ namespace JaeZoo.Server.Controllers
         }
 
         // ===== Мой профиль =====
-        // GET /api/users/me
         [HttpGet("me")]
         public async Task<ActionResult<UserProfileDto>> Me(CancellationToken ct)
         {
@@ -76,7 +76,6 @@ namespace JaeZoo.Server.Controllers
         }
 
         // ===== Публичный профиль =====
-        // GET /api/users/{id}
         [HttpGet("{id:guid}")]
         [AllowAnonymous]
         public async Task<ActionResult<PublicUserDto>> GetPublic(Guid id, CancellationToken ct)
@@ -88,7 +87,6 @@ namespace JaeZoo.Server.Controllers
         }
 
         // ===== Обновить профиль =====
-        // PUT /api/users/profile
         [HttpPut("profile")]
         public async Task<ActionResult<UserProfileDto>> UpdateProfile([FromBody] UpdateProfileRequest body, CancellationToken ct)
         {
@@ -110,7 +108,6 @@ namespace JaeZoo.Server.Controllers
         }
 
         // ===== Статус =====
-        // PUT /api/users/status
         [HttpPut("status")]
         public async Task<ActionResult<UserProfileDto>> UpdateStatus([FromBody] UpdateStatusRequest body, CancellationToken ct)
         {
@@ -123,8 +120,7 @@ namespace JaeZoo.Server.Controllers
             return Ok(ToProfileDto(me));
         }
 
-        // ===== Установить URL аватара вручную (опционально оставляем) =====
-        // PUT /api/users/avatar/url
+        // ===== Установить URL аватара вручную =====
         [HttpPut("avatar/url")]
         public async Task<ActionResult<UserProfileDto>> SetAvatarUrl([FromBody] SetAvatarUrlRequest body, CancellationToken ct)
         {
@@ -134,8 +130,7 @@ namespace JaeZoo.Server.Controllers
             return Ok(ToProfileDto(me));
         }
 
-        // ===== Загрузка файла аватара (ХРАНЕНИЕ В БД) =====
-        // POST /api/users/avatar/upload   (multipart/form-data, name="file")
+        // ===== Загрузка аватара =====
         [Authorize]
         [RequestSizeLimit(5 * 1024 * 1024)] // 5MB
         [HttpPost("avatar/upload")]
@@ -172,7 +167,7 @@ namespace JaeZoo.Server.Controllers
             await _db.SaveChangesAsync(ct);
 
             var version = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var url = $"/avatars/{uid}?v={version}"; // клиентам можно кэш-бастить
+            var url = $"/avatars/{uid}?v={version}";
 
             var me = await _db.Users.FirstAsync(u => u.Id == uid, ct);
             me.AvatarUrl = url;
@@ -181,8 +176,7 @@ namespace JaeZoo.Server.Controllers
             return Ok(new { url });
         }
 
-        // ===== Выдача аватара по Id (анонимно) =====
-        // GET /avatars/{id}
+        // ===== Выдача аватара =====
         [AllowAnonymous]
         [HttpGet("/avatars/{id:guid}")]
         public async Task<IActionResult> GetAvatar(Guid id, CancellationToken ct)
@@ -193,9 +187,14 @@ namespace JaeZoo.Server.Controllers
                 .FirstOrDefaultAsync(ct);
 
             if (avatar is null || avatar.Data.Length == 0)
+            {
+                // если нет аватара → отдать заглушку
+                var path = Path.Combine(_env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot"), "avatars", "default.png");
+                if (System.IO.File.Exists(path))
+                    return PhysicalFile(path, "image/png");
                 return NotFound();
+            }
 
-            // Простой слабый ETag (можно заменить на SHA256)
             var etag = $"W/\"{avatar.Data.Length}-{avatar.CreatedAt.ToUniversalTime():yyyyMMddHHmmss}\"";
             var ifNone = Request.Headers["If-None-Match"].ToString();
             if (!string.IsNullOrEmpty(ifNone) && string.Equals(ifNone, etag, StringComparison.Ordinal))
@@ -209,14 +208,14 @@ namespace JaeZoo.Server.Controllers
 
         // ===== helpers =====
         private static UserProfileDto ToProfileDto(User u) =>
-    new UserProfileDto(
-        u.Id, u.UserName, u.Email,
-        u.DisplayName,
-        string.IsNullOrWhiteSpace(u.AvatarUrl) ? $"/avatars/{u.Id}" : u.AvatarUrl,
-        u.About,
-        u.Status, u.CustomStatus,
-        u.CreatedAt, u.LastSeen
-    );
+            new UserProfileDto(
+                u.Id, u.UserName, u.Email,
+                u.DisplayName,
+                string.IsNullOrWhiteSpace(u.AvatarUrl) ? $"/avatars/{u.Id}" : u.AvatarUrl,
+                u.About,
+                u.Status, u.CustomStatus,
+                u.CreatedAt, u.LastSeen
+            );
 
         private static PublicUserDto ToPublicDto(User u) =>
             new PublicUserDto(
