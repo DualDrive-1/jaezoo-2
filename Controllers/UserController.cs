@@ -172,7 +172,11 @@ namespace JaeZoo.Server.Controllers
             await _db.SaveChangesAsync(ct);
 
             var version = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var url = $"/avatars/{uid}?v={version}"; // для клиента — cache-busting
+            var url = $"/avatars/{uid}?v={version}"; // клиентам можно кэш-бастить
+
+            var me = await _db.Users.FirstAsync(u => u.Id == uid, ct);
+            me.AvatarUrl = url;
+            await _db.SaveChangesAsync(ct);
 
             return Ok(new { url });
         }
@@ -205,17 +209,20 @@ namespace JaeZoo.Server.Controllers
 
         // ===== helpers =====
         private static UserProfileDto ToProfileDto(User u) =>
-            new UserProfileDto(
-                u.Id, u.UserName, u.Email,
-                u.DisplayName, u.AvatarUrl, u.About,
-                u.Status, u.CustomStatus,
-                u.CreatedAt, u.LastSeen
-            );
+    new UserProfileDto(
+        u.Id, u.UserName, u.Email,
+        u.DisplayName,
+        string.IsNullOrWhiteSpace(u.AvatarUrl) ? $"/avatars/{u.Id}" : u.AvatarUrl,
+        u.About,
+        u.Status, u.CustomStatus,
+        u.CreatedAt, u.LastSeen
+    );
 
         private static PublicUserDto ToPublicDto(User u) =>
             new PublicUserDto(
                 u.Id, u.UserName, u.DisplayName,
-                u.AvatarUrl, u.Status, u.CustomStatus, u.LastSeen
+                string.IsNullOrWhiteSpace(u.AvatarUrl) ? $"/avatars/{u.Id}" : u.AvatarUrl,
+                u.Status, u.CustomStatus, u.LastSeen
             );
     }
 }
