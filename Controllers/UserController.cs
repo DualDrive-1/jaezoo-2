@@ -2,6 +2,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using JaeZoo.Server.Data;
 using JaeZoo.Server.Models;
 
@@ -75,15 +77,34 @@ namespace JaeZoo.Server.Controllers
             return Ok(ToProfileDto(me));
         }
 
-        // ===== Публичный профиль =====
+        // ===== Публичный профиль (ETag + Cache-Control) =====
         [HttpGet("{id:guid}")]
         [AllowAnonymous]
         public async Task<ActionResult<PublicUserDto>> GetPublic(Guid id, CancellationToken ct)
         {
-            var u = await _db.Users.FirstOrDefaultAsync(x => x.Id == id, ct);
+            var u = await _db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
             if (u == null) return NotFound();
 
-            return Ok(ToPublicDto(u));
+            var dto = ToPublicDto(u);
+
+            // Стабильный ETag по ключевым полям профиля
+            string payload = $"{u.Id}|{u.UserName}|{u.DisplayName}|{u.AvatarUrl}|{u.Status}|{u.CustomStatus}|{u.LastSeen?.ToUniversalTime():O}";
+            using var sha = SHA1.Create();
+            var hash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+            var etag = $"W/\"{hash}\"";
+
+            var ifNone = Request.Headers["If-None-Match"].ToString();
+            if (!string.IsNullOrEmpty(ifNone) && string.Equals(ifNone, etag, StringComparison.Ordinal))
+            {
+                Response.Headers.ETag = etag;
+                Response.Headers.CacheControl = "public,max-age=60";
+                return StatusCode(StatusCodes.Status304NotModified);
+            }
+
+            Response.Headers.ETag = etag;
+            Response.Headers.CacheControl = "public,max-age=60";
+
+            return Ok(dto);
         }
 
         // ===== Обновить профиль =====
@@ -176,7 +197,7 @@ namespace JaeZoo.Server.Controllers
             return Ok(new { url });
         }
 
-        // ===== Выдача аватара =====
+        // ===== Выдача аватара (ETag + длинный Cache-Control) =====
         [AllowAnonymous]
         [HttpGet("/avatars/{id:guid}")]
         public async Task<IActionResult> GetAvatar(Guid id, CancellationToken ct)
@@ -188,20 +209,29 @@ namespace JaeZoo.Server.Controllers
 
             if (avatar is null || avatar.Data.Length == 0)
             {
-                // если нет аватара → отдать заглушку
+                // заглушка
                 var path = Path.Combine(_env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot"), "avatars", "default.png");
                 if (System.IO.File.Exists(path))
+                {
+                    Response.Headers.CacheControl = "public,max-age=86400";
                     return PhysicalFile(path, "image/png");
+                }
                 return NotFound();
             }
 
             var etag = $"W/\"{avatar.Data.Length}-{avatar.CreatedAt.ToUniversalTime():yyyyMMddHHmmss}\"";
             var ifNone = Request.Headers["If-None-Match"].ToString();
             if (!string.IsNullOrEmpty(ifNone) && string.Equals(ifNone, etag, StringComparison.Ordinal))
+            {
+                Response.Headers.ETag = etag;
+                Response.Headers.CacheControl = "public,max-age=86400";
                 return StatusCode(StatusCodes.Status304NotModified);
+            }
 
             Response.Headers.ETag = etag;
-            Response.Headers.CacheControl = "public,max-age=3600";
+            // если у URL есть ?v= — можно кешировать подольше (immutable)
+            var hasVersion = Request.Query.ContainsKey("v");
+            Response.Headers.CacheControl = hasVersion ? "public,max-age=31536000,immutable" : "public,max-age=86400";
 
             return File(avatar.Data, avatar.ContentType ?? "image/png");
         }

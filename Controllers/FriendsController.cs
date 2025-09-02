@@ -15,9 +15,7 @@ public class FriendsController : ControllerBase
     private readonly AppDbContext _db;
     public FriendsController(AppDbContext db) => _db = db;
 
-    // --------------------------------------------------
     // Helpers
-    // --------------------------------------------------
     private Guid MeId
     {
         get
@@ -30,11 +28,9 @@ public class FriendsController : ControllerBase
         }
     }
 
-    // --------------------------------------------------
-    // Список принятых друзей (как раньше)
-    // GET /api/friends/list
-    // --------------------------------------------------
+    // Список друзей
     [HttpGet("list")]
+    [ResponseCache(Duration = 15, Location = ResponseCacheLocation.Client)]
     public async Task<ActionResult<IEnumerable<FriendDto>>> List()
     {
         var me = MeId;
@@ -55,10 +51,7 @@ public class FriendsController : ControllerBase
         return Ok(friends);
     }
 
-    // --------------------------------------------------
-    // Отправить заявку (idempotent). Встречная — автопринятие (как было)
-    // POST /api/friends/request/{userId}
-    // --------------------------------------------------
+    // Отправить заявку (idempotent)
     [HttpPost("request/{userId:guid}")]
     public async Task<IActionResult> SendRequest(Guid userId)
     {
@@ -88,7 +81,6 @@ public class FriendsController : ControllerBase
             return Ok(new { created = true, accepted = false });
         }
 
-        // встречная ожидала — принимаем
         if (existing.Status == FriendshipStatus.Pending &&
             existing.RequesterId == userId && existing.AddresseeId == me)
         {
@@ -97,7 +89,6 @@ public class FriendsController : ControllerBase
             return Ok(new { created = false, accepted = true });
         }
 
-        // уже друзья или уже моя pending
         return Ok(new
         {
             created = false,
@@ -106,11 +97,9 @@ public class FriendsController : ControllerBase
         });
     }
 
-    // --------------------------------------------------
-    // Входящие заявки (я адресат)
-    // GET /api/friends/requests/incoming
-    // --------------------------------------------------
+    // Входящие заявки
     [HttpGet("requests/incoming")]
+    [ResponseCache(Duration = 5, Location = ResponseCacheLocation.Client)]
     public async Task<ActionResult<IEnumerable<FriendRequestDto>>> IncomingRequests()
     {
         var me = MeId;
@@ -134,11 +123,9 @@ public class FriendsController : ControllerBase
         return Ok(list);
     }
 
-    // --------------------------------------------------
-    // Исходящие заявки (я отправитель)
-    // GET /api/friends/requests/outgoing
-    // --------------------------------------------------
+    // Исходящие заявки
     [HttpGet("requests/outgoing")]
+    [ResponseCache(Duration = 5, Location = ResponseCacheLocation.Client)]
     public async Task<ActionResult<IEnumerable<FriendRequestDto>>> OutgoingRequests()
     {
         var me = MeId;
@@ -162,10 +149,6 @@ public class FriendsController : ControllerBase
         return Ok(list);
     }
 
-    // --------------------------------------------------
-    // Принять заявку (только адресат)
-    // POST /api/friends/requests/{requestId}/accept
-    // --------------------------------------------------
     [HttpPost("requests/{requestId:guid}/accept")]
     public async Task<IActionResult> Accept(Guid requestId)
     {
@@ -183,10 +166,6 @@ public class FriendsController : ControllerBase
         return Ok(new { ok = true });
     }
 
-    // --------------------------------------------------
-    // Отклонить заявку (только адресат)
-    // POST /api/friends/requests/{requestId}/decline
-    // --------------------------------------------------
     [HttpPost("requests/{requestId:guid}/decline")]
     public async Task<IActionResult> Decline(Guid requestId)
     {
@@ -204,10 +183,6 @@ public class FriendsController : ControllerBase
         return Ok(new { ok = true });
     }
 
-    // --------------------------------------------------
-    // Отменить свою исходящую (только отправитель)
-    // DELETE /api/friends/requests/{requestId}
-    // --------------------------------------------------
     [HttpDelete("requests/{requestId:guid}")]
     public async Task<IActionResult> Cancel(Guid requestId)
     {
